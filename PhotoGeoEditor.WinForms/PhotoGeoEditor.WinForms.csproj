@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>PhotoGeoEditor.Gui</AssemblyName>
+    <RootNamespace>PhotoGeoEditor.WinForms</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Встроенный браузер для карты (Leaflet + OpenStreetMap) -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.*" />
+    <ProjectReference Include="..\PhotoGeoEditor.Core\PhotoGeoEditor.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Assets\map.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

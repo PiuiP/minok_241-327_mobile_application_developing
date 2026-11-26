@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PhotoGeoEditor map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html, body, #map { height: 100%; margin: 0; background: #d9d9d9; font-family: Segoe UI, sans-serif; }
+  body.dark { background: #202225; }
+  /* тёмная тема: инвертируем только плитки карты */
+  body.dark .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9); }
+
+  .pin-wrap { background: none; border: none; }
+  .pin { position: relative; width: 56px; height: 56px; }
+  .pin img, .pin .noimg {
+    position: absolute; left: 4px; top: 4px; width: 48px; height: 48px;
+    box-sizing: border-box; border: 2px solid #fff; border-radius: 4px;
+    box-shadow: 0 1px 6px rgba(0,0,0,.65); object-fit: cover; background: #888;
+  }
+  .pin.mod img, .pin.mod .noimg { border-color: #2196f3; }   /* изменено, но ещё не записано */
+  .pin.sel img, .pin.sel .noimg { border-color: #ff9800; box-shadow: 0 0 0 2px #ff9800, 0 1px 8px rgba(0,0,0,.8); }
+  /* стрелка направления съёмки: треугольник над миниатюрой, поворачивается вокруг центра */
+  .pin .arrow { position: absolute; left: 0; top: 0; width: 56px; height: 56px; pointer-events: none; }
+  .pin .arrow::before {
+    content: ''; position: absolute; left: 50%; top: -9px; margin-left: -7px;
+    border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 15px solid #e53935;
+    filter: drop-shadow(0 0 1px #fff);
+  }
+  #fail { display: none; padding: 24px; font-size: 16px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="fail">Не удалось загрузить библиотеку карты (Leaflet). Проверьте подключение к интернету и перезапустите приложение.</div>
+
+<script>
+const post = m => window.chrome.webview.postMessage(m);
+
+function main() {
+  const map = L.map('map').setView([55.7539, 37.6208], 11);
+  let tiles = null;
+  const markers = new Map();   // id -> L.marker
+  const data = new Map();      // id -> последние данные о фото
+  let selectedId = null;
+  let showDirection = true;
+
+  function setTiles(url) {
+    if (tiles) map.removeLayer(tiles);
+    tiles = L.tileLayer(url, { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+  }
+  setTiles('https://tile.openstreetmap.org/{z}/{x}/{y}.png');
+
+  function iconFor(p) {
+    const cls = 'pin' + (p.id === selectedId ? ' sel' : '') + (p.modified ? ' mod' : '');
+    const arrow = (showDirection && p.dir != null) ? `<div class="arrow" style="transform:rotate(${p.dir}deg)"></div>` : '';
+    const img = p.thumb ? `<img src="${p.thumb}" alt="">` : `<div class="noimg"></div>`;
+    return L.divIcon({ className: 'pin-wrap', iconSize: [56, 56], iconAnchor: [28, 28], html: `<div class="${cls}">${arrow}${img}</div>` });
+  }
+
+  function removeMarker(id) {
+    const m = markers.get(id);
+    if (m) { map.removeLayer(m); markers.delete(id); }
+  }
+
+  function refreshIcon(id) {
+    const m = markers.get(id), p = data.get(id);
+    if (m && p) m.setIcon(iconFor(p));
+  }
+
+  function upsert(p) {
+    data.set(p.id, p);
+    if (p.lat == null || p.lng == null) { removeMarker(p.id); return; }   // нет координат — нет маркера
+
+    let m = markers.get(p.id);
+    if (!m) {
+      m = L.marker([p.lat, p.lng], { icon: iconFor(p), draggable: true, title: p.name, riseOnHover: true }).addTo(map);
+      m.on('click', () => { select(p.id, false); post({ type: 'select', id: p.id }); });
+      m.on('dragend', () => {
+        const ll = m.getLatLng();
+        post({ type: 'moved', id: p.id, lat: ll.lat, lng: ll.lng });   // C# обновит модель PhotoItem
+      });
+      markers.set(p.id, m);
+    } else {
+      m.setLatLng([p.lat, p.lng]);
+      m.setIcon(iconFor(p));
+    }
+  }
+
+  function select(id, pan) {
+    const old = selectedId;
+    selectedId = id;
+    if (old && old !== id) { const om = markers.get(old); if (om) om.setZIndexOffset(0); refreshIcon(old); }
+    if (id) {
+      refreshIcon(id);
+      const m = markers.get(id);
+      if (m) { m.setZIndexOffset(1000); if (pan) map.panInside(m.getLatLng(), { padding: [80, 80] }); }
+    }
+  }
+
+  function fit() {
+    const pts = [...markers.values()].map(m => m.getLatLng());
+    if (pts.length === 1) map.setView(pts[0], 16);
+    else if (pts.length > 1) map.fitBounds(L.latLngBounds(pts).pad(0.2), { maxZoom: 17 });
+  }
+
+  // ---- сообщения из C# ----
+  window.chrome.webview.addEventListener('message', ev => {
+    const m = ev.data;
+    switch (m.type) {
+      case 'init':
+        showDirection = m.showDirection;
+        document.body.classList.toggle('dark', !!m.dark);
+        if (m.tileUrl) setTiles(m.tileUrl);
+        break;
+      case 'theme': document.body.classList.toggle('dark', !!m.dark); break;
+      case 'showDirection': showDirection = !!m.value; data.forEach((_, id) => refreshIcon(id)); break;
+      case 'upsert': upsert(m.photo); break;
+      case 'remove': removeMarker(m.id); data.delete(m.id); if (selectedId === m.id) selectedId = null; break;
+      case 'clear': markers.forEach(mk => map.removeLayer(mk)); markers.clear(); data.clear(); selectedId = null; break;
+      case 'select': if (m.id) select(m.id, true); else select(null, false); break;
+      case 'focus': { const mk = markers.get(m.id); if (mk) map.setView(mk.getLatLng(), Math.max(map.getZoom(), 16)); break; }
+      case 'fit': fit(); break;
+      case 'setView': map.setView([m.lat, m.lng], m.zoom); break;
+    }
+  });
+
+  // ---- события карты -> C# ----
+  map.on('moveend', () => { const c = map.getCenter(); post({ type: 'view', lat: c.lat, lng: c.lng, zoom: map.getZoom() }); });
+  map.on('contextmenu', e => post({ type: 'place', lat: e.latlng.lat, lng: e.latlng.lng }));   // правая кнопка = поставить фото сюда
+
+  // Когда фокус в браузере, меню WinForms горячих клавиш не видит — пробрасываем нужные сочетания в C#.
+  document.addEventListener('keydown', e => {
+    const isF1 = e.key === 'F1';
+    const isCtrl = (e.ctrlKey || e.metaKey) && /^[a-z0-9]$/i.test(e.key);
+    if (isF1 || isCtrl) {
+      e.preventDefault();
+      post({ type: 'key', key: e.key, ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
+    }
+  });
+
+  post({ type: 'ready' });
+}
+
+if (typeof L === 'undefined') {
+  document.getElementById('map').style.display = 'none';
+  document.getElementById('fail').style.display = 'block';
+} else {
+  main();
+}
+</script>
+</body>
+</html>

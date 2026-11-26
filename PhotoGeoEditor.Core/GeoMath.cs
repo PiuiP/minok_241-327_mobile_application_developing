@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace PhotoGeoEditor.Core;
 
-/// <summary>Вспомогательные функции для координат (проверка, нормализация, градусы/минуты/секунды).</summary>
+/// <summary> функции для координат (проверка, нормализация, градусы/минуты/секунды).</summary>
 public static class GeoMath
 {
     public static bool IsValidLatitude(double value) => value is >= -90 and <= 90;
